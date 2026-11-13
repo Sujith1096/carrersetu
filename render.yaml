@@ -3,7 +3,7 @@ services:
   - type: web
     name: careersetu-backend
     env: python
-    region: oregon
+    region: singapore
     plan: free
     rootDir: backend
     buildCommand: "pip install -r requirements.txt"
@@ -33,6 +33,6 @@ databases:
   # Managed PostgreSQL Database
   - name: careersetu-postgres
     plan: free
-    region: oregon
+    region: singapore
     databaseName: careersetu
     user: careersetu_user
