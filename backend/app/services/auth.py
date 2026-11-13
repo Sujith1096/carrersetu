@@ -10,11 +10,39 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import User
 
-# JWT Secret: read from environment or use a secure 64-character production default
-JWT_SECRET = os.getenv(
-    "JWT_SECRET", 
-    "careersetu_prod_security_secret_token_key_change_via_env_var_9876543210"
-)
+def is_production() -> bool:
+    """Detect if running in production environment."""
+    env = os.getenv("ENVIRONMENT", "").lower().strip()
+    if env in ["production", "prod"]:
+        return True
+    render_val = os.getenv("RENDER", "").lower().strip()
+    if render_val and render_val not in ["false", "0", "no"]:
+        return True
+    db_url = os.getenv("DATABASE_URL", "").lower().strip()
+    if db_url and not (db_url.startswith("sqlite") or "careersetu.db" in db_url):
+        return True
+    return False
+
+def get_jwt_secret() -> str:
+    """
+    Retrieve JWT secret key with strict production security enforcement.
+    In production: Requires JWT_SECRET to be configured (min 32 characters); fails safely if missing.
+    In local development: Allows dev-only fallback if not explicitly provided.
+    """
+    secret = os.getenv("JWT_SECRET")
+    if is_production():
+        if not secret or len(secret.strip()) < 32:
+            raise RuntimeError(
+                "[FATAL] JWT_SECRET environment variable is missing or insufficiently secure in production. "
+                "A secret of at least 32 characters is required for secure authentication."
+            )
+        return secret.strip()
+
+    # Local development fallback only
+    if secret and secret.strip():
+        return secret.strip()
+    return "dev_insecure_jwt_secret_key_only_for_local_debugging_32chars"
+
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRE_DAYS = 14
 
@@ -41,12 +69,12 @@ def create_access_token(user_id: int, email: str, expires_delta: Optional[timede
         "exp": expire,
         "iat": datetime.now(timezone.utc)
     }
-    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+    return jwt.encode(payload, get_jwt_secret(), algorithm=JWT_ALGORITHM)
 
 def decode_access_token(token: str) -> Optional[dict]:
     """Decode and validate a JWT access token."""
     try:
-        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        payload = jwt.decode(token, get_jwt_secret(), algorithms=[JWT_ALGORITHM])
         return payload
     except (jwt.PyJWTError, Exception):
         return None

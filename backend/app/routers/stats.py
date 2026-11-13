@@ -18,13 +18,30 @@ def get_dashboard_stats(
 ):
     """
     Compute aggregate dashboard metrics, skill frequencies, and score distributions.
-    If authenticated, securely scopes metrics to the user's private data.
+    Strictly isolated to the authenticated user's records.
+    Never exposes other users' reports or private data to guests.
     """
-    query = db.query(AnalysisRecord)
-    if user:
-        query = query.filter(AnalysisRecord.user_id == user.id)
-        
-    records = query.order_by(AnalysisRecord.created_at.desc()).all()
+    if not user:
+        # Strictly unauthenticated guest: return empty baseline response with zero personal data
+        return StatsResponse(
+            total_analyses=0,
+            average_score=0.0,
+            highest_score=0.0,
+            lowest_score=0.0,
+            score_distribution={
+                "< 50": 0,
+                "50-69": 0,
+                "70-84": 0,
+                "85-100": 0
+            },
+            top_in_demand_skills=[],
+            top_missing_skills=[],
+            recent_history=[]
+        )
+
+    records = db.query(AnalysisRecord).filter(
+        AnalysisRecord.user_id == user.id
+    ).order_by(AnalysisRecord.created_at.desc()).all()
     
     if not records:
         return StatsResponse(

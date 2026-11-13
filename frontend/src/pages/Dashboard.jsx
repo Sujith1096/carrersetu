@@ -23,7 +23,7 @@ import {
 import MetricCard from '../components/MetricCard';
 import { api } from '../services/api';
 
-export default function Dashboard({ setActivePage, onSelectReport }) {
+export default function Dashboard({ setActivePage, onSelectReport, currentUser, onOpenAuth }) {
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -43,7 +43,7 @@ export default function Dashboard({ setActivePage, onSelectReport }) {
 
   useEffect(() => {
     fetchStats();
-  }, []);
+  }, [currentUser]);
 
   const handleViewReport = async (id) => {
     try {
@@ -106,6 +106,33 @@ export default function Dashboard({ setActivePage, onSelectReport }) {
           </button>
         </div>
       </div>
+
+      {/* Guest Mode Notice */}
+      {!currentUser && (
+        <div className="p-4 sm:p-5 rounded-2xl bg-white border border-gold-200/80 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-start sm:items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-gold-50 border border-gold-200 flex items-center justify-center text-gold-700 flex-shrink-0">
+              <Sparkles className="w-4 h-4" />
+            </div>
+            <div>
+              <h3 className="font-serif text-sm font-bold text-forest-950">
+                Guest Telemetry — Private User Records Protected
+              </h3>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Sign in or use 1-Click Demo Login to save evaluations, track ATS score improvements, and view your private history.
+              </p>
+            </div>
+          </div>
+          {onOpenAuth && (
+            <button
+              onClick={onOpenAuth}
+              className="px-3.5 py-1.5 rounded-xl text-xs font-bold bg-forest-800 text-white hover:bg-forest-900 border border-forest-700 shadow-xs transition-all whitespace-nowrap cursor-pointer flex-shrink-0"
+            >
+              Sign In / Demo Login
+            </button>
+          )}
+        </div>
+      )}
 
       {/* 4 Metric Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
@@ -316,7 +343,21 @@ export default function Dashboard({ setActivePage, onSelectReport }) {
               ) : (
                 <tr>
                   <td colSpan={6} className="px-6 py-8 text-center text-slate-400">
-                    No evaluations recorded yet. Run a job match to see historical activity.
+                    {!currentUser ? (
+                      <div className="flex flex-col items-center justify-center space-y-2">
+                        <p>No evaluations recorded in guest mode.</p>
+                        {onOpenAuth && (
+                          <button
+                            onClick={onOpenAuth}
+                            className="text-xs font-semibold text-forest-700 hover:text-forest-900 underline cursor-pointer"
+                          >
+                            Sign in or demo login to access your personal history
+                          </button>
+                        )}
+                      </div>
+                    ) : (
+                      "No evaluations recorded yet. Run a job match to see historical activity."
+                    )}
                   </td>
                 </tr>
               )}

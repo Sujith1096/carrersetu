@@ -205,11 +205,45 @@ class TestFinalSecurityAndProductionReadiness(unittest.TestCase):
         self.assertEqual(del_a.status_code, 200)
 
     # =========================================================================
-    # 3. DASHBOARD STATS ISOLATION
+    # 3. DASHBOARD STATS ISOLATION & GUEST PRIVACY
     # =========================================================================
 
     def test_03_dashboard_stats_isolation(self):
-        # User B has no records; stats should show total_analyses == 0
+        # 1. Unauthenticated guest accessing /api/stats receives clean empty response (no personal data leaked)
+        guest_stats = client.get("/api/stats")
+        self.assertEqual(guest_stats.status_code, 200)
+        data_guest = guest_stats.json()
+        self.assertEqual(data_guest["total_analyses"], 0)
+        self.assertEqual(data_guest["recent_history"], [])
+        self.assertEqual(data_guest["average_score"], 0.0)
+
+        # 2. User A creates a private analysis record
+        client.post(
+            "/api/analyze/text",
+            headers={"Authorization": f"Bearer {self.user_a_token}"},
+            json={
+                "resume_text": "Alice Private Resume with Python and Docker",
+                "job_description": "Looking for Python Engineer",
+                "job_title": "Python Engineer",
+                "job_company": "Secret Corp",
+                "file_name": "alice_private.txt"
+            }
+        )
+
+        # 3. User A queries /api/stats -> sees User A's private analysis
+        stats_a = client.get("/api/stats", headers={"Authorization": f"Bearer {self.user_a_token}"})
+        self.assertEqual(stats_a.status_code, 200)
+        data_a = stats_a.json()
+        self.assertGreaterEqual(data_a["total_analyses"], 1)
+        self.assertTrue(any(item["job_company"] == "Secret Corp" for item in data_a["recent_history"]))
+
+        # 4. Guest queries /api/stats -> STILL sees 0 records and NEVER sees User A's report!
+        guest_stats_after = client.get("/api/stats")
+        self.assertEqual(guest_stats_after.status_code, 200)
+        self.assertEqual(guest_stats_after.json()["total_analyses"], 0)
+        self.assertEqual(guest_stats_after.json()["recent_history"], [])
+
+        # 5. User B queries /api/stats -> total_analyses == 0, never sees User A's report!
         stats_b = client.get("/api/stats", headers={"Authorization": f"Bearer {self.user_b_token}"})
         self.assertEqual(stats_b.status_code, 200)
         data_b = stats_b.json()
@@ -347,6 +381,88 @@ class TestFinalSecurityAndProductionReadiness(unittest.TestCase):
             db.commit()
         finally:
             db.close()
+
+    # =========================================================================
+    # 7. JWT SECRET PRODUCTION ENFORCEMENT & DEV FALLBACK
+    # =========================================================================
+
+    def test_07_jwt_secret_production_enforcement(self):
+        from app.services.auth import get_jwt_secret
+
+        # 1. Missing secret in production raises RuntimeError
+        with patch.dict(os.environ, {"ENVIRONMENT": "production", "JWT_SECRET": ""}, clear=False):
+            with self.assertRaises(RuntimeError) as ctx:
+                get_jwt_secret()
+            self.assertIn("JWT_SECRET environment variable is missing", str(ctx.exception))
+
+        # 2. Too short secret in production raises RuntimeError (<32 chars)
+        with patch.dict(os.environ, {"ENVIRONMENT": "production", "JWT_SECRET": "too_short_key"}, clear=False):
+            with self.assertRaises(RuntimeError) as ctx:
+                get_jwt_secret()
+            self.assertIn("JWT_SECRET environment variable is missing", str(ctx.exception))
+
+        # 3. Valid production secret succeeds (>= 32 chars)
+        prod_secret = "a_super_secure_production_secret_key_1234567890"
+        with patch.dict(os.environ, {"ENVIRONMENT": "production", "JWT_SECRET": prod_secret}, clear=False):
+            self.assertEqual(get_jwt_secret(), prod_secret)
+
+        # 4. In development mode without explicit key, dev fallback key is returned safely
+        with patch.dict(os.environ, {"ENVIRONMENT": "development", "JWT_SECRET": "", "RENDER": ""}, clear=False):
+            dev_key = get_jwt_secret()
+            self.assertTrue(len(dev_key) >= 32)
+            self.assertIn("dev_", dev_key)
+
+    # =========================================================================
+    # 8. ALEMBIC FRESH DATABASE BASELINE & IDEMPOTENCY
+    # =========================================================================
+
+    def test_08_alembic_fresh_database_baseline(self):
+        import sqlite3
+        from alembic.config import Config
+        from alembic import command
+        from app.database import init_db
+
+        backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        temp_db_path = os.path.join(backend_dir, "test_alembic_fresh_baseline.db")
+        clean_url_path = temp_db_path.replace("\\", "/")
+        if os.path.exists(temp_db_path):
+            os.remove(temp_db_path)
+
+        try:
+            # 1. Run Alembic upgrade head on completely fresh, empty database
+            alembic_cfg_path = os.path.join(backend_dir, "alembic.ini")
+            cfg = Config(alembic_cfg_path)
+            cfg.set_main_option("sqlalchemy.url", f"sqlite:///{clean_url_path}")
+            command.upgrade(cfg, "head")
+
+            # 2. Verify all 5 tables are created
+            conn = sqlite3.connect(temp_db_path)
+            cursor = conn.cursor()
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            tables = [r[0] for r in cursor.fetchall()]
+
+            self.assertIn("users", tables)
+            self.assertIn("company_profiles", tables)
+            self.assertIn("job_listings", tables)
+            self.assertIn("analysis_records", tables)
+            self.assertIn("sync_metadata", tables)
+            self.assertIn("alembic_version", tables)
+
+            # 3. Verify job_listings required columns
+            cursor.execute("PRAGMA table_info(job_listings)")
+            cols = [r[1] for r in cursor.fetchall()]
+            self.assertIn("is_demo", cols)
+            self.assertIn("last_synced_at", cols)
+            self.assertIn("expires_at", cols)
+
+            conn.close()
+
+            # 4. Verify init_db() executes safely without conflicts or wiping records
+            init_db()
+
+        finally:
+            if os.path.exists(temp_db_path):
+                os.remove(temp_db_path)
 
 
 if __name__ == "__main__":

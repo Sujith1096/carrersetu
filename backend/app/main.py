@@ -12,6 +12,10 @@ from sqlalchemy import text
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan: safely initialize database and seed baseline data if empty."""
+    # Enforce security credential verification (fails safely in production if JWT_SECRET missing)
+    from app.services.auth import get_jwt_secret
+    get_jwt_secret()
+
     init_db()
     db = SessionLocal()
     try:

@@ -139,6 +139,8 @@ export default function App() {
                 setActiveReport(report);
                 setActivePage('report');
               }} 
+              currentUser={currentUser}
+              onOpenAuth={() => setIsAuthOpen(true)}
             />
           )}
 

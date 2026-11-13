@@ -46,8 +46,29 @@ def get_db():
     finally:
         db.close()
 
+def run_migrations():
+    """Run Alembic migrations programmatically to ensure head revision is applied."""
+    try:
+        from alembic.config import Config
+        from alembic import command
+        backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        alembic_cfg_path = os.path.join(backend_dir, "alembic.ini")
+        if os.path.exists(alembic_cfg_path):
+            alembic_cfg = Config(alembic_cfg_path)
+            alembic_cfg.set_main_option("sqlalchemy.url", DATABASE_URL.replace("%", "%%"))
+            command.upgrade(alembic_cfg, "head")
+            print("[INFO] Alembic migrations executed successfully.")
+    except Exception as e:
+        is_prod = os.getenv("ENVIRONMENT") == "production" or not DATABASE_URL.startswith("sqlite")
+        if is_prod:
+            print(f"[FATAL] Critical: Alembic migration failed in production: {e}")
+            raise RuntimeError(f"Production migration failure: {e}")
+        else:
+            print(f"[WARN] Alembic migration runner notice: {e}")
+
 def init_db():
     """Safely initialize database tables without deleting existing records."""
+    run_migrations()
     try:
         Base.metadata.create_all(bind=engine)
         print(f"[INFO] Database initialized successfully ({'SQLite' if 'sqlite' in DATABASE_URL else 'PostgreSQL'}).")
