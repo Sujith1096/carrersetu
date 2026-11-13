@@ -12,6 +12,9 @@ from app.services.recommendations import generate_recommendations
 
 router = APIRouter(prefix="/api/analyze", tags=["Analysis"])
 
+MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
+MAX_TEXT_LENGTH = 100_000         # 100,000 characters
+
 def _process_and_save_analysis(
     resume_text: str,
     jd_text: str,
@@ -20,25 +23,43 @@ def _process_and_save_analysis(
     job_company: str,
     db: Session
 ) -> AnalysisResponse:
-    if not resume_text.strip():
+    cleaned_resume = resume_text.strip()
+    cleaned_jd = jd_text.strip()
+
+    if not cleaned_resume:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Resume text is empty or could not be processed."
+            detail="Resume text is empty. Please provide resume content to evaluate."
         )
-    if not jd_text.strip():
+    if len(cleaned_resume) < 30:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Resume content is too short for a meaningful ATS assessment. Please provide at least 30 characters."
+        )
+    if not cleaned_jd:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Job description is empty. Please provide job requirements to compare against."
+            detail="Job description is empty. Please paste the job requirements to compare against."
         )
-        
+    if len(cleaned_jd) < 15:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Job description is too brief. Please provide detailed job responsibilities and required skills."
+        )
+
+    # Sanitize title & company lengths for database limits
+    safe_title = (job_title or "Target Role").strip()[:200]
+    safe_company = (job_company or "Company").strip()[:200]
+    safe_filename = (file_name or "Resume.pdf").strip()[:200]
+
     # Contact & links extraction
-    candidate_name, email, phone, links = parse_contact_info(resume_text)
+    candidate_name, email, phone, links = parse_contact_info(cleaned_resume)
     
     # Section segmentation
-    sections = segment_resume_sections(resume_text)
+    sections = segment_resume_sections(cleaned_resume)
     
     # ML & ATS scoring engine
-    scoring = calculate_ats_score(resume_text, jd_text, sections)
+    scoring = calculate_ats_score(cleaned_resume, cleaned_jd, sections)
     
     # Actionable recommendations
     recs = generate_recommendations(scoring, sections, links)
@@ -54,14 +75,14 @@ def _process_and_save_analysis(
         explanation=scoring["explanation"]
     )
     
-    # Store in SQLite database
+    # Store in database
     db_record = AnalysisRecord(
         candidate_name=candidate_name,
         candidate_email=email,
         candidate_phone=phone,
-        file_name=file_name,
-        job_title=job_title or "Target Role",
-        job_company=job_company or "Target Company",
+        file_name=safe_filename,
+        job_title=safe_title,
+        job_company=safe_company,
         overall_score=scoring["overall_score"],
         match_rating=scoring["match_rating"],
         skills_score=scoring["skills_score"],
@@ -75,16 +96,16 @@ def _process_and_save_analysis(
         parsed_sections=json.dumps(sections),
         recommendations=json.dumps([r.model_dump() for r in recs]),
         score_breakdown=json.dumps(score_breakdown.model_dump()),
-        raw_resume_text=resume_text,
-        raw_job_description=jd_text
+        raw_resume_text=cleaned_resume[:MAX_TEXT_LENGTH],
+        raw_job_description=cleaned_jd[:MAX_TEXT_LENGTH]
     )
     db.add(db_record)
     db.commit()
     db.refresh(db_record)
     
     # Word count statistics
-    word_count_resume = len(resume_text.split())
-    word_count_jd = len(jd_text.split())
+    word_count_resume = len(cleaned_resume.split())
+    word_count_jd = len(cleaned_jd.split())
     
     return AnalysisResponse(
         id=db_record.id,
@@ -93,9 +114,9 @@ def _process_and_save_analysis(
         candidate_email=email,
         candidate_phone=phone,
         candidate_links=links,
-        file_name=file_name,
-        job_title=job_title,
-        job_company=job_company,
+        file_name=safe_filename,
+        job_title=safe_title,
+        job_company=safe_company,
         overall_score=scoring["overall_score"],
         match_rating=scoring["match_rating"],
         score_breakdown=score_breakdown,
@@ -109,8 +130,8 @@ def _process_and_save_analysis(
         word_count_jd=word_count_jd,
         quantified_metrics_count=scoring["metrics_count"],
         action_verbs_found=scoring["action_verbs"],
-        raw_resume_text=resume_text,
-        raw_job_description=jd_text
+        raw_resume_text=cleaned_resume,
+        raw_job_description=cleaned_jd
     )
 
 @router.post("/upload", response_model=AnalysisResponse)
@@ -122,36 +143,43 @@ async def analyze_pdf_upload(
     db: Session = Depends(get_db)
 ):
     """Upload PDF resume, extract text via PyMuPDF, and run ATS analysis against JD."""
-    if not file.filename.lower().endswith(".pdf"):
+    filename = (file.filename or "").lower()
+    if not filename.endswith(".pdf"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Only PDF files are supported. Please upload a valid .pdf resume."
+            detail="Invalid file format. Only PDF documents (.pdf) are supported."
         )
-    
-    # Read file contents
+
+    # Read content with 10MB limit enforcement
     content = await file.read()
-    if len(content) > 10 * 1024 * 1024:  # 10 MB limit
+    if len(content) > MAX_FILE_SIZE:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="File size exceeds maximum allowed limit (10MB)."
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="The uploaded PDF file exceeds the 10 MB maximum allowed size."
         )
     if len(content) == 0:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Uploaded PDF file is completely empty."
+            detail="The uploaded PDF file is empty (0 bytes). Please upload a valid document."
         )
 
     try:
         resume_text = extract_text_from_pdf_bytes(content)
     except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, 
+            detail=str(e)
+        )
     except Exception as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"PDF extraction error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
+            detail=f"PDF extraction error: {str(e)}"
+        )
 
     return _process_and_save_analysis(
         resume_text=resume_text,
         jd_text=job_description,
-        file_name=file.filename,
+        file_name=file.filename or "Uploaded_Resume.pdf",
         job_title=job_title,
         job_company=job_company,
         db=db

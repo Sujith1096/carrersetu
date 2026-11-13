@@ -150,7 +150,7 @@ def compute_tfidf_similarity(resume_text: str, jd_text: str) -> Tuple[float, Lis
         return round(scaled_similarity, 1), top_shared_terms
         
     except Exception as e:
-        return 50.0, []
+        return 0.0, []
 
 def detect_action_verbs(text: str) -> List[str]:
     """Detect presence of strong ATS action verbs."""

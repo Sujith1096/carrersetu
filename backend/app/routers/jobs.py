@@ -96,8 +96,6 @@ def get_jobs(
     """
     Search and filter global active job postings with pagination.
     """
-    job_aggregator.ensure_seed_data(db)
-
     items, total, total_pages = job_aggregator.search_jobs(
         db=db,
         search=search,
@@ -155,7 +153,6 @@ def sync_live_jobs(db: Session = Depends(get_db)):
 @router.get("/jobs/filters/options", response_model=JobFilterOptionsResponse)
 def get_filter_options(db: Session = Depends(get_db)):
     """Return distinct filter choices for UI dropdowns."""
-    job_aggregator.ensure_seed_data(db)
     opts = job_aggregator.get_filter_options(db)
     return JobFilterOptionsResponse(
         roles=opts["roles"],
@@ -182,8 +179,6 @@ def get_companies(
     """
     Search and list enterprise companies hiring across India and globally.
     """
-    job_aggregator.ensure_seed_data(db)
-
     query = db.query(CompanyProfile)
     if search and search.strip():
         term = f"%{search.strip()}%"

@@ -798,64 +798,73 @@ class JobAggregatorService:
 
     def __init__(self):
         self.last_sync_time: Optional[datetime] = None
+        self.is_seeded: bool = False
 
     def ensure_seed_data(self, db: Session):
         """Seed initial companies and curated jobs if database tables are empty."""
-        company_count = db.query(CompanyProfile).count()
-        if company_count == 0:
-            print("[INFO] Seeding initial company profiles...")
-            for comp in INITIAL_COMPANIES:
-                company_obj = CompanyProfile(
-                    id=comp["id"],
-                    name=comp["name"],
-                    logo=comp["logo"],
-                    industry=comp["industry"],
-                    headquarters=comp["headquarters"],
-                    locations=json.dumps(comp["locations"]),
-                    website=comp["website"],
-                    career_page=comp["career_page"],
-                    description=comp["description"],
-                    size=comp["size"],
-                    founded_year=comp.get("founded_year"),
-                    is_featured=comp.get("is_featured", False),
-                    openings_count=0
-                )
-                db.add(company_obj)
-            db.commit()
+        if self.is_seeded:
+            return
 
-        job_count = db.query(JobListing).count()
-        if job_count == 0:
-            print("[INFO] Seeding baseline job records...")
-            for j in CURATED_BASELINE_JOBS:
-                job_obj = JobListing(
-                    id=j["id"],
-                    title=j["title"],
-                    company=j["company"],
-                    company_id=j.get("company_id", ""),
-                    company_logo=j.get("company_logo", ""),
-                    location=j["location"],
-                    city=j.get("city", ""),
-                    country=j.get("country", "Global"),
-                    work_mode=j.get("work_mode", "Remote"),
-                    role_category=j.get("role_category", "Software Engineering"),
-                    experience_level=j.get("experience_level", "Mid-level"),
-                    employment_type=j.get("employment_type", "Full-time"),
-                    salary_min=j.get("salary_min"),
-                    salary_max=j.get("salary_max"),
-                    salary_currency=j.get("salary_currency", "USD"),
-                    salary_text=j.get("salary_text", ""),
-                    skills=json.dumps(j.get("skills", [])),
-                    description=j["description"],
-                    url=j["url"],
-                    source=j.get("source", "Official Careers"),
-                    posted_date=j.get("posted_date", datetime.utcnow()),
-                    is_active=True
-                )
-                db.add(job_obj)
-            db.commit()
+        try:
+            company_count = db.query(CompanyProfile).count()
+            if company_count == 0:
+                print("[INFO] Seeding initial company profiles...")
+                for comp in INITIAL_COMPANIES:
+                    company_obj = CompanyProfile(
+                        id=comp["id"],
+                        name=comp["name"],
+                        logo=comp["logo"],
+                        industry=comp["industry"],
+                        headquarters=comp["headquarters"],
+                        locations=json.dumps(comp["locations"]),
+                        website=comp["website"],
+                        career_page=comp["career_page"],
+                        description=comp["description"],
+                        size=comp["size"],
+                        founded_year=comp.get("founded_year"),
+                        is_featured=comp.get("is_featured", False),
+                        openings_count=0
+                    )
+                    db.add(company_obj)
+                db.commit()
 
-        # Update company openings count
-        self.recalculate_company_openings(db)
+            job_count = db.query(JobListing).count()
+            if job_count == 0:
+                print("[INFO] Seeding baseline job records...")
+                for j in CURATED_BASELINE_JOBS:
+                    job_obj = JobListing(
+                        id=j["id"],
+                        title=j["title"],
+                        company=j["company"],
+                        company_id=j.get("company_id", ""),
+                        company_logo=j.get("company_logo", ""),
+                        location=j["location"],
+                        city=j.get("city", ""),
+                        country=j.get("country", "Global"),
+                        work_mode=j.get("work_mode", "Remote"),
+                        role_category=j.get("role_category", "Software Engineering"),
+                        experience_level=j.get("experience_level", "Mid-level"),
+                        employment_type=j.get("employment_type", "Full-time"),
+                        salary_min=j.get("salary_min"),
+                        salary_max=j.get("salary_max"),
+                        salary_currency=j.get("salary_currency", "USD"),
+                        salary_text=j.get("salary_text", ""),
+                        skills=json.dumps(j.get("skills", [])),
+                        description=j["description"],
+                        url=j["url"],
+                        source=j.get("source", "Official Careers"),
+                        posted_date=j.get("posted_date", datetime.utcnow()),
+                        is_active=True
+                    )
+                    db.add(job_obj)
+                db.commit()
+
+            if company_count == 0 or job_count == 0:
+                self.recalculate_company_openings(db)
+
+            self.is_seeded = True
+        except Exception as e:
+            print(f"[WARN] Database seed check notice: {e}")
 
     def recalculate_company_openings(self, db: Session):
         """Update openings_count for all companies based on active jobs in database."""
@@ -1024,8 +1033,21 @@ class JobAggregatorService:
     def sync_live_jobs(self, db: Session) -> Dict[str, Any]:
         """
         Orchestrates syncing live listings from Remotive, Arbeitnow, and Greenhouse boards.
-        Deduplicates against SQLite and returns sync metrics.
+        Deduplicates against database and enforces a 60s cooldown to prevent API flooding.
         """
+        now = datetime.now(timezone.utc)
+        if self.last_sync_time:
+            elapsed = (now - self.last_sync_time).total_seconds()
+            if elapsed < 60:
+                total_active = db.query(JobListing).filter(JobListing.is_active == True).count()
+                return {
+                    "status": "cached",
+                    "message": f"Sync rate-limit active. Jobs were refreshed {int(elapsed)}s ago. Serving verified listings (cooldown: 60s).",
+                    "fetched": 0,
+                    "added": 0,
+                    "total_active_jobs": total_active
+                }
+
         fetched_jobs: List[Dict[str, Any]] = []
 
         # 1. Remotive API

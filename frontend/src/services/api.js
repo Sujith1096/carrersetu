@@ -1,4 +1,47 @@
-const API_BASE = '/api';
+// Resolve API base URL: Use VITE_API_URL if configured, otherwise fallback to Vite development proxy '/api'
+const resolveApiBase = () => {
+  const envUrl = import.meta.env.VITE_API_URL;
+  if (!envUrl || !envUrl.trim()) {
+    return '/api';
+  }
+  const clean = envUrl.trim().replace(/\/+$/, '');
+  return clean.endsWith('/api') ? clean : `${clean}/api`;
+};
+
+export const API_BASE = resolveApiBase();
+
+/**
+ * Isolated Client Session Storage for J.A.R.V.I.S. API Keys.
+ * Ensures user keys are stored only in their current browser session and never leak to other users.
+ */
+export const jarvisSessionStore = {
+  getKey: () => {
+    try {
+      return sessionStorage.getItem('careersetu_jarvis_key') || '';
+    } catch {
+      return '';
+    }
+  },
+  getProvider: () => {
+    try {
+      return sessionStorage.getItem('careersetu_jarvis_provider') || 'gemini';
+    } catch {
+      return 'gemini';
+    }
+  },
+  setCredentials: (provider, key) => {
+    try {
+      sessionStorage.setItem('careersetu_jarvis_provider', provider || 'gemini');
+      sessionStorage.setItem('careersetu_jarvis_key', key || '');
+    } catch {}
+  },
+  clear: () => {
+    try {
+      sessionStorage.removeItem('careersetu_jarvis_key');
+      sessionStorage.removeItem('careersetu_jarvis_provider');
+    } catch {}
+  }
+};
 
 export async function fetchJson(endpoint, options = {}) {
   const res = await fetch(`${API_BASE}${endpoint}`, {
@@ -82,8 +125,10 @@ export const api = {
     });
   },
 
-  // J.A.R.V.I.S. AI Assistant
+  // J.A.R.V.I.S. AI Assistant (Session isolated)
   jarvisChat: ({ message, conversationHistory = [], context = null, interviewState = null }) => {
+    const clientKey = jarvisSessionStore.getKey();
+    const clientProvider = jarvisSessionStore.getProvider();
     return fetchJson('/jarvis/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -92,29 +137,46 @@ export const api = {
         conversation_history: conversationHistory,
         context,
         interview_state: interviewState,
+        client_provider: clientKey ? clientProvider : undefined,
+        client_api_key: clientKey ? clientKey : undefined,
       }),
     });
   },
 
   jarvisStartInterview: (context = null) => {
+    const clientKey = jarvisSessionStore.getKey();
+    const clientProvider = jarvisSessionStore.getProvider();
     return fetchJson('/jarvis/interview/start', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(context || {}),
+      body: JSON.stringify({
+        context: context || {},
+        client_provider: clientKey ? clientProvider : undefined,
+        client_api_key: clientKey ? clientKey : undefined,
+      }),
     });
   },
 
   jarvisGetStatus: () => fetchJson('/jarvis/status'),
 
-  jarvisConfigureKey: ({ provider, apiKey }) => {
-    return fetchJson('/jarvis/config', {
+  jarvisConfigureKey: async ({ provider, apiKey }) => {
+    if (!apiKey || !apiKey.trim()) {
+      jarvisSessionStore.clear();
+      return fetchJson('/jarvis/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider, api_key: '' }),
+      });
+    }
+
+    const res = await fetchJson('/jarvis/config', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        provider,
-        api_key: apiKey,
-      }),
+      body: JSON.stringify({ provider, api_key: apiKey }),
     });
+
+    jarvisSessionStore.setCredentials(provider, apiKey);
+    return res;
   },
 
   // Global Jobs Explorer

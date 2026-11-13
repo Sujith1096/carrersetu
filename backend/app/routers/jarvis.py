@@ -15,6 +15,13 @@ class JarvisChatRequest(BaseModel):
     conversation_history: Optional[List[ChatMessage]] = []
     context: Optional[Dict[str, Any]] = None
     interview_state: Optional[Dict[str, Any]] = None
+    client_provider: Optional[str] = None
+    client_api_key: Optional[str] = None
+
+class InterviewStartRequest(BaseModel):
+    context: Optional[Dict[str, Any]] = None
+    client_provider: Optional[str] = None
+    client_api_key: Optional[str] = None
 
 class JarvisChatResponse(BaseModel):
     reply: str
@@ -47,7 +54,9 @@ def jarvis_chat(payload: JarvisChatRequest):
         message=payload.message.strip(),
         conversation_history=history_dicts,
         context=payload.context,
-        interview_state=payload.interview_state
+        interview_state=payload.interview_state,
+        client_provider=payload.client_provider,
+        client_api_key=payload.client_api_key
     )
 
     return JarvisChatResponse(
@@ -60,9 +69,10 @@ def jarvis_chat(payload: JarvisChatRequest):
     )
 
 @router.post("/interview/start", response_model=JarvisChatResponse)
-def start_interview(context: Optional[Dict[str, Any]] = None):
+def start_interview(payload: Optional[InterviewStartRequest] = None):
     """Direct trigger to initiate interactive interview mode."""
-    result = jarvis_engine._start_mock_interview(context)
+    ctx = payload.context if payload else None
+    result = jarvis_engine._start_mock_interview(ctx)
     return JarvisChatResponse(
         reply=result["reply"],
         mode=result["mode"],
@@ -80,25 +90,30 @@ def get_jarvis_status():
             "mode": "live_api",
             "provider": provider.upper(),
             "has_key": True,
-            "description": f"Connected to {provider.upper()} cloud neural model."
+            "has_server_key": True,
+            "description": f"Connected to {provider.upper()} cloud neural model configured on backend."
         }
     return {
         "mode": "local_intelligence",
         "provider": "JARVIS Autonomous Engine",
         "has_key": False,
-        "description": "Running CareerSetu Local Intelligence Engine with full context awareness (No external API key set)."
+        "has_server_key": False,
+        "description": "Running CareerSetu Local Intelligence Engine with full context awareness (No server key configured)."
     }
 
 @router.post("/config")
 def set_api_key(payload: KeyConfigRequest):
-    """Optional: Configure cloud AI provider key during the active session."""
-    if not payload.api_key.strip():
-        jarvis_engine.clear_session_key()
+    """Safely validate user's personal API key format for client session storage."""
+    key = payload.api_key.strip() if payload.api_key else ""
+    if not key:
         return {"status": "reset", "message": "Reverted to JARVIS Local Intelligence Engine."}
-
-    jarvis_engine.set_session_key(payload.provider, payload.api_key)
+    if len(key) < 15:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="The provided API key appears too short or invalid. Please check your credentials."
+        )
     return {
         "status": "configured",
         "provider": payload.provider,
-        "message": f"Successfully activated {payload.provider.upper()} cloud intelligence for JARVIS."
+        "message": f"{payload.provider.upper()} API key verified for current session."
     }

@@ -26,7 +26,7 @@ import {
   Check
 } from 'lucide-react';
 import JarvisVisualizer from './JarvisVisualizer';
-import { api } from '../../services/api';
+import { api, jarvisSessionStore } from '../../services/api';
 
 export default function JarvisChatPanel({ isOpen, onClose, contextReport, onUpdateCandidateName }) {
   const [messages, setMessages] = useState([]);
@@ -65,8 +65,27 @@ export default function JarvisChatPanel({ isOpen, onClose, contextReport, onUpda
   // Load status and welcome message on open
   useEffect(() => {
     if (isOpen) {
+      const storedKey = jarvisSessionStore.getKey();
+      const storedProvider = jarvisSessionStore.getProvider();
+      if (storedKey) {
+        setApiKeyInput(storedKey);
+        setSelectedProvider(storedProvider);
+      }
+
       api.jarvisGetStatus()
-        .then((st) => setJarvisStatus(st))
+        .then((st) => {
+          if (storedKey) {
+            setJarvisStatus({
+              ...st,
+              mode: 'live_api',
+              provider: storedProvider.toUpperCase(),
+              has_key: true,
+              description: `Connected to ${storedProvider.toUpperCase()} cloud neural model (Browser Session).`
+            });
+          } else {
+            setJarvisStatus(st);
+          }
+        })
         .catch((err) => console.error('Failed to get JARVIS status:', err));
 
       if (messages.length === 0) {
@@ -223,8 +242,17 @@ export default function JarvisChatPanel({ isOpen, onClose, contextReport, onUpda
         apiKey: apiKeyInput,
       });
       setConfigMessage(res.message);
-      const updatedStatus = await api.jarvisGetStatus();
-      setJarvisStatus(updatedStatus);
+      if (apiKeyInput && apiKeyInput.trim()) {
+        setJarvisStatus({
+          mode: 'live_api',
+          provider: selectedProvider.toUpperCase(),
+          has_key: true,
+          description: `Connected to ${selectedProvider.toUpperCase()} cloud neural model (Browser Session).`
+        });
+      } else {
+        const updatedStatus = await api.jarvisGetStatus();
+        setJarvisStatus(updatedStatus);
+      }
       setTimeout(() => {
         setShowKeyConfig(false);
         setConfigMessage(null);

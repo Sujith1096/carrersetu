@@ -2,17 +2,13 @@ import React from 'react';
 import { 
   Sparkles, 
   ArrowRight, 
-  ShieldCheck, 
   Cpu, 
   FileCheck2, 
   Target, 
   BarChart3, 
-  Layers, 
   Zap,
   CheckCircle2,
-  FileText,
-  Globe,
-  Building2
+  Globe
 } from 'lucide-react';
 import { api } from '../services/api';
 

@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import JarvisVisualizer from './JarvisVisualizer';
-import { Sparkles } from 'lucide-react';
 
 export default function JarvisFloatingOrb({ isOpen, onClick, activeCandidate, atsScore }) {
   const [isHovered, setIsHovered] = useState(false);

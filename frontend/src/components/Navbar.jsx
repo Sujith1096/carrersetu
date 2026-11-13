@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Sparkles, FileText, BarChart3, Activity, ArrowRight, ShieldCheck } from 'lucide-react';
+import { Sparkles, ArrowRight } from 'lucide-react';
 import { api } from '../services/api';
 
 export default function Navbar({ activePage, setActivePage, onOpenJarvis }) {

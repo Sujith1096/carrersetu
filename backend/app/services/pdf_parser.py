@@ -73,8 +73,11 @@ def extract_text_from_pdf_bytes(pdf_bytes: bytes) -> str:
             extracted_text.append(text)
     
     full_text = "\n".join(extracted_text).strip()
-    if not full_text or len(full_text.strip()) < 40:
-        raise ValueError("Could not extract readable text from PDF. It may be a scanned image or empty.")
+    if not full_text or len(full_text.strip()) < 30:
+        raise ValueError(
+            "Could not extract readable text from this PDF. It appears to be an image-only scanned document or empty. "
+            "Please upload a text-based PDF or switch to the 'Paste Resume Text' tab to analyze immediately."
+        )
     
     return full_text
 

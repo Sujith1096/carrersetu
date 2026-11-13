@@ -2,24 +2,15 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { 
   Search, 
   MapPin, 
-  Briefcase, 
-  Building2, 
-  Filter, 
   Sparkles, 
   ExternalLink, 
   RefreshCw, 
-  Clock, 
   DollarSign, 
   CheckCircle2, 
   ChevronRight, 
-  Layers, 
   SlidersHorizontal, 
   X, 
-  ArrowRight,
-  Globe,
-  Tag,
-  Zap,
-  Info
+  Globe
 } from 'lucide-react';
 import { api } from '../services/api';
 

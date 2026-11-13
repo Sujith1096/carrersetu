@@ -34,32 +34,31 @@ class JarvisEngine:
         # Multi-turn topic tracker
         self.session_last_topics: Dict[str, str] = {}
 
-    def get_active_provider(self) -> Tuple[Optional[str], Optional[str]]:
+    def get_active_provider(
+        self,
+        client_provider: Optional[str] = None,
+        client_api_key: Optional[str] = None
+    ) -> Tuple[Optional[str], Optional[str]]:
         """Return (provider_name, api_key) or (None, None) if in local mode."""
-        if self.custom_api_key and self.custom_provider:
-            return self.custom_provider, self.custom_api_key
+        # 1. Per-request client credential priority (isolated to caller session)
+        if client_provider and client_api_key and client_api_key.strip():
+            return client_provider.lower().strip(), client_api_key.strip()
 
+        # 2. Server-side environment variables configured on hosting platform
         gemini_key = os.getenv("GEMINI_API_KEY")
-        if gemini_key:
-            return "gemini", gemini_key
+        if gemini_key and gemini_key.strip():
+            return "gemini", gemini_key.strip()
 
         openai_key = os.getenv("OPENAI_API_KEY")
-        if openai_key:
-            return "openai", openai_key
+        if openai_key and openai_key.strip():
+            return "openai", openai_key.strip()
 
         groq_key = os.getenv("GROQ_API_KEY")
-        if groq_key:
-            return "groq", groq_key
+        if groq_key and groq_key.strip():
+            return "groq", groq_key.strip()
 
+        # 3. Fallback to local intelligence
         return None, None
-
-    def set_session_key(self, provider: str, key: str):
-        self.custom_provider = provider.lower()
-        self.custom_api_key = key.strip()
-
-    def clear_session_key(self):
-        self.custom_provider = None
-        self.custom_api_key = None
 
     # =========================================================================
     # CLOUD API INTEGRATIONS (Reasoning-Calibrated: Temp 0.2, 4096-8192 Tokens)
@@ -152,7 +151,9 @@ class JarvisEngine:
         message: str,
         conversation_history: List[Dict[str, str]],
         context: Optional[Dict[str, Any]] = None,
-        interview_state: Optional[Dict[str, Any]] = None
+        interview_state: Optional[Dict[str, Any]] = None,
+        client_provider: Optional[str] = None,
+        client_api_key: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Master Response Coordinator:
@@ -201,7 +202,7 @@ class JarvisEngine:
                 clean_history.append({"role": h["role"], "content": h["content"]})
         clean_history.append({"role": "user", "content": message})
 
-        provider, api_key = self.get_active_provider()
+        provider, api_key = self.get_active_provider(client_provider, client_api_key)
 
         # Build comprehensive reasoning system prompt for Cloud AI
         system_prompt = f"""You are J.A.R.V.I.S. (Just A Rather Very Intelligent System), the elite personal AI career mentor and engineering strategist in CareerSetu.

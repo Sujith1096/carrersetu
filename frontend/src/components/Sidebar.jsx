@@ -7,8 +7,6 @@ import {
   Sparkles, 
   Download,
   BookOpen,
-  HelpCircle,
-  ExternalLink,
   Bot,
   Globe,
   Building2

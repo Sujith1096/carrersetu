@@ -12,6 +12,8 @@ import JarvisFloatingOrb from './components/Jarvis/JarvisFloatingOrb';
 import JarvisChatPanel from './components/Jarvis/JarvisChatPanel';
 import { api } from './services/api';
 
+const CURRENT_YEAR = new Date().getFullYear();
+
 export default function App() {
   const [activePage, setActivePage] = useState('landing');
   const [activeReport, setActiveReport] = useState(null);
@@ -207,7 +209,7 @@ export default function App() {
           </div>
 
           <div className="text-slate-500">
-            Portfolio Project &copy; {new Date().getFullYear()}
+            Portfolio Project &copy; {CURRENT_YEAR}
           </div>
         </div>
       </footer>
