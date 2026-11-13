@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Sparkles, ArrowRight } from 'lucide-react';
+import { Sparkles, ArrowRight, LogIn, LogOut } from 'lucide-react';
 import { api } from '../services/api';
 
-export default function Navbar({ activePage, setActivePage, onOpenJarvis }) {
+export default function Navbar({ activePage, setActivePage, onOpenJarvis, currentUser, onOpenAuth, onLogout }) {
   const [isHealthy, setIsHealthy] = useState(null);
 
   useEffect(() => {
@@ -98,6 +98,36 @@ export default function Navbar({ activePage, setActivePage, onOpenJarvis }) {
 
           {/* Right Action & Status */}
           <div className="flex items-center gap-2.5">
+            {/* User Account Button */}
+            {currentUser ? (
+              <div className="flex items-center gap-2">
+                <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-forest-50 border border-forest-200 text-xs font-semibold text-forest-900">
+                  <span className="w-5 h-5 rounded-full bg-forest-800 text-gold-400 flex items-center justify-center text-[10px] font-bold">
+                    {(currentUser.full_name || currentUser.email || 'U')[0].toUpperCase()}
+                  </span>
+                  <span className="max-w-[100px] truncate">{currentUser.full_name || currentUser.email}</span>
+                  {currentUser.is_demo && (
+                    <span className="text-[9px] px-1 py-0.5 rounded bg-gold-100 text-gold-800 font-bold">DEMO</span>
+                  )}
+                </div>
+                <button
+                  onClick={onLogout}
+                  title="Sign Out"
+                  className="p-1.5 rounded-lg text-slate-500 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
+                >
+                  <LogOut className="w-4 h-4" />
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={onOpenAuth}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-100 text-slate-700 hover:bg-forest-50 hover:text-forest-900 border border-slate-200 transition-colors cursor-pointer"
+              >
+                <LogIn className="w-3.5 h-3.5 text-forest-700" />
+                <span>Sign In</span>
+              </button>
+            )}
+
             {/* JARVIS Button */}
             <button
               onClick={onOpenJarvis}

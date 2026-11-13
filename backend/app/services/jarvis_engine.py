@@ -42,7 +42,9 @@ class JarvisEngine:
         """Return (provider_name, api_key) or (None, None) if in local mode."""
         # 1. Per-request client credential priority (isolated to caller session)
         if client_provider and client_api_key and client_api_key.strip():
-            return client_provider.lower().strip(), client_api_key.strip()
+            p = client_provider.lower().strip()
+            if p in ["gemini", "openai", "groq"]:
+                return p, client_api_key.strip()
 
         # 2. Server-side environment variables configured on hosting platform
         gemini_key = os.getenv("GEMINI_API_KEY")
@@ -266,7 +268,9 @@ CRITICAL OPERATIONAL RULES:
             history=clean_history,
             context=context,
             interview_state=interview_state,
-            candidate_name=candidate_name
+            candidate_name=candidate_name,
+            client_provider=client_provider,
+            client_api_key=client_api_key
         )
 
     # =========================================================================
@@ -312,7 +316,9 @@ CRITICAL OPERATIONAL RULES:
         history: List[Dict[str, str]],
         context: Optional[Dict[str, Any]],
         interview_state: Optional[Dict[str, Any]],
-        candidate_name: str
+        candidate_name: str,
+        client_provider: Optional[str] = None,
+        client_api_key: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         High-Performance Autonomous Dialogue & Reasoning Engine.
@@ -334,7 +340,12 @@ CRITICAL OPERATIONAL RULES:
             "start interview", "mock interview", "practice interview", "interview me",
             "interview practice", "technical interview", "take my interview"
         ]):
-            return self._start_mock_interview(context, candidate_name)
+            return self._start_mock_interview(
+                context=context,
+                candidate_name=candidate_name,
+                client_provider=client_provider,
+                client_api_key=client_api_key
+            )
 
         # 2. FOLLOW-UP DETECTION & RESOLUTION
         last_topic = self.session_last_topics.get("default", None)
@@ -1501,48 +1512,103 @@ Would you like to practice your response to a tough behavioral question?"""
     # INTERACTIVE MOCK INTERVIEW
     # =========================================================================
 
-    def _start_mock_interview(self, context: Optional[Dict[str, Any]] = None, candidate_name: Optional[str] = None) -> Dict[str, Any]:
+    def _start_mock_interview(
+        self,
+        context: Optional[Dict[str, Any]] = None,
+        candidate_name: Optional[str] = None,
+        client_provider: Optional[str] = None,
+        client_api_key: Optional[str] = None
+    ) -> Dict[str, Any]:
         if not candidate_name:
             candidate_name = self._resolve_candidate_name("", context)
         job_title = context.get("job_title", "Software Engineer") if context else "Software Engineer"
+        job_company = context.get("job_company", "Target Company") if context else "Target Company"
+        matching_skills = context.get("matching_skills", []) if context else []
+        missing_skills = context.get("missing_skills", []) if context else []
 
-        tl = job_title.lower()
-        if "frontend" in tl or "react" in tl:
-            first_q = "How do you diagnose and eliminate unnecessary re-renders in a large-scale React application handling high-frequency state updates?"
-            category = "Frontend Architecture & React"
-        elif "ai" in tl or "data" in tl or "machine" in tl:
-            first_q = "Can you explain the mathematical difference between TF-IDF cosine similarity and dense vector embeddings (like BERT) for document matching?"
-            category = "AI / Machine Learning & NLP"
-        elif "devops" in tl or "cloud" in tl:
-            first_q = "How do you design a zero-downtime blue/green deployment strategy for containerized microservices in Kubernetes?"
-            category = "DevOps & Cloud Architecture"
+        provider, api_key = self.get_active_provider(client_provider, client_api_key)
+
+        first_q = None
+        category = "Technical Architecture"
+        cloud_reply = None
+        cloud_provider_name = None
+
+        if provider and api_key:
+            try:
+                system_prompt = f"""You are J.A.R.V.I.S., the elite technical interviewer in CareerSetu.
+Conducting technical mock interview (Round 1 of 4) for candidate '{candidate_name}' applying for '{job_title}' at '{job_company}'.
+Key candidate skills: {', '.join(matching_skills[:6]) if matching_skills else 'General Engineering'}.
+Areas to probe: {', '.join(missing_skills[:4]) if missing_skills else 'Architecture & Systems'}.
+
+Instructions:
+1. Greet the candidate in Tony Stark's JARVIS persona.
+2. State the target role and domain.
+3. Formulate exactly ONE sharp, senior-level technical question relevant to the role and skills.
+4. Output the question clearly enclosed in quotes or header.
+Keep the greeting concise and focused on the technical problem."""
+
+                messages = [{"role": "user", "content": f"Begin Question 1 for role {job_title}."}]
+
+                if provider == "gemini":
+                    cloud_reply = self.call_gemini(api_key, system_prompt, messages)
+                    cloud_provider_name = f"Google Gemini Cloud ({provider.upper()})"
+                elif provider in ["openai", "groq"]:
+                    base_url = "https://api.openai.com/v1" if provider == "openai" else "https://api.groq.com/openai/v1"
+                    model = "gpt-4o" if provider == "openai" else "llama-3.3-70b-versatile"
+                    cloud_reply = self.call_openai_compatible(api_key, base_url, model, system_prompt, messages)
+                    cloud_provider_name = f"{provider.upper()} Cloud AI"
+
+                if cloud_reply:
+                    first_q = cloud_reply.strip()
+                    category = f"{job_title} Domain"
+            except Exception as e:
+                print(f"[WARN] Cloud AI interview start failed ({e}). Reverting to Local Intelligence Engine.")
+                cloud_reply = None
+
+        if not cloud_reply:
+            tl = job_title.lower()
+            if "frontend" in tl or "react" in tl:
+                first_q = "How do you diagnose and eliminate unnecessary re-renders in a large-scale React application handling high-frequency state updates?"
+                category = "Frontend Architecture & React"
+            elif "ai" in tl or "data" in tl or "machine" in tl:
+                first_q = "Can you explain the mathematical difference between TF-IDF cosine similarity and dense vector embeddings (like BERT) for document matching?"
+                category = "AI / Machine Learning & NLP"
+            elif "devops" in tl or "cloud" in tl:
+                first_q = "How do you design a zero-downtime blue/green deployment strategy for containerized microservices in Kubernetes?"
+                category = "DevOps & Cloud Architecture"
+            else:
+                first_q = "When building a high-throughput REST API using FastAPI and PostgreSQL, how do you configure database connection pooling and prevent query bottlenecks under concurrency?"
+                category = "Backend Architecture & Databases"
+
+            reply = f"🎙️ **Interactive Technical Interview Initiated**\n\n"
+            reply += f"Candidate: **{candidate_name}**\n"
+            reply += f"Target Role: **{job_title}**\n"
+            reply += f"Session Progress: Question **1 of 4** &bull; Domain: *{category}*\n\n"
+            reply += "---\n\n"
+            reply += f"### Question 1:\n"
+            reply += f"**\"{first_q}\"**\n\n"
+            reply += "*Take your time to structure a clear, engineering-grade response. When ready, transmit your answer below and I will evaluate your depth, accuracy, and trade-off considerations.*"
+            mode = "local_intelligence"
+            provider_label = "JARVIS Autonomous Intelligence Engine"
         else:
-            first_q = "When building a high-throughput REST API using FastAPI and PostgreSQL, how do you configure database connection pooling and prevent query bottlenecks under concurrency?"
-            category = "Backend Architecture & Databases"
+            reply = cloud_reply
+            mode = "live_api"
+            provider_label = cloud_provider_name
 
         interview_state = {
             "active": True,
             "question_index": 1,
             "total_questions": 4,
-            "current_question": first_q,
+            "current_question": first_q or "Describe your technical approach to building scalable systems.",
             "category": category,
             "scores": [],
             "history": []
         }
 
-        reply = f"🎙️ **Interactive Technical Interview Initiated**\n\n"
-        reply += f"Candidate: **{candidate_name}**\n"
-        reply += f"Target Role: **{job_title}**\n"
-        reply += f"Session Progress: Question **1 of 4** &bull; Domain: *{category}*\n\n"
-        reply += "---\n\n"
-        reply += f"### Question 1:\n"
-        reply += f"**\"{first_q}\"**\n\n"
-        reply += "*Take your time to structure a clear, engineering-grade response. When ready, transmit your answer below and I will evaluate your depth, accuracy, and trade-off considerations.*"
-
         return {
             "reply": reply,
-            "mode": "local_intelligence",
-            "provider": "JARVIS Autonomous Intelligence Engine",
+            "mode": mode,
+            "provider": provider_label,
             "interview_state": interview_state,
             "suggested_replies": [
                 "I use memoization, virtualization, and web workers...",

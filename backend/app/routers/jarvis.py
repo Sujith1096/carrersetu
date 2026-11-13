@@ -47,6 +47,14 @@ def jarvis_chat(payload: JarvisChatRequest):
             detail="Message cannot be empty."
         )
 
+    if payload.client_provider:
+        norm_provider = payload.client_provider.lower().strip()
+        if norm_provider not in ["gemini", "openai", "groq"]:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Unsupported AI provider '{payload.client_provider}'. Supported providers are: gemini, openai, groq."
+            )
+
     # Convert history
     history_dicts = [{"role": m.role, "content": m.content} for m in (payload.conversation_history or [])]
     
@@ -72,7 +80,22 @@ def jarvis_chat(payload: JarvisChatRequest):
 def start_interview(payload: Optional[InterviewStartRequest] = None):
     """Direct trigger to initiate interactive interview mode."""
     ctx = payload.context if payload else None
-    result = jarvis_engine._start_mock_interview(ctx)
+    client_provider = payload.client_provider if payload else None
+    client_api_key = payload.client_api_key if payload else None
+
+    if client_provider:
+        norm_provider = client_provider.lower().strip()
+        if norm_provider not in ["gemini", "openai", "groq"]:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Unsupported AI provider '{client_provider}'. Supported providers are: gemini, openai, groq."
+            )
+
+    result = jarvis_engine._start_mock_interview(
+        context=ctx,
+        client_provider=client_provider,
+        client_api_key=client_api_key
+    )
     return JarvisChatResponse(
         reply=result["reply"],
         mode=result["mode"],
@@ -104,6 +127,13 @@ def get_jarvis_status():
 @router.post("/config")
 def set_api_key(payload: KeyConfigRequest):
     """Safely validate user's personal API key format for client session storage."""
+    provider = payload.provider.lower().strip() if payload.provider else ""
+    if provider not in ["gemini", "openai", "groq"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported AI provider '{payload.provider}'. Supported providers are: gemini, openai, groq."
+        )
+
     key = payload.api_key.strip() if payload.api_key else ""
     if not key:
         return {"status": "reset", "message": "Reverted to JARVIS Local Intelligence Engine."}

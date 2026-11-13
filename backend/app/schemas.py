@@ -113,6 +113,8 @@ class JobItem(BaseModel):
     source: str = "Verified Career Portal"
     posted_date: str = ""
     is_active: bool = True
+    is_demo: bool = False
+    last_synced_at: Optional[str] = None
 
 class JobListResponse(BaseModel):
     total: int

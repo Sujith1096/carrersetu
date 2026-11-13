@@ -1,14 +1,16 @@
 import json
+from typing import Optional
 from datetime import datetime
 from fastapi import APIRouter, Depends, File, Form, UploadFile, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import AnalysisRecord
+from app.models import AnalysisRecord, User
 from app.schemas import AnalysisResponse, AnalyzeTextRequest, ScoreBreakdown, RecommendationItem
 from app.services.pdf_parser import extract_text_from_pdf_bytes, parse_contact_info, segment_resume_sections
 from app.services.ml_engine import calculate_ats_score
 from app.services.recommendations import generate_recommendations
+from app.services.auth import get_optional_user
 
 router = APIRouter(prefix="/api/analyze", tags=["Analysis"])
 
@@ -21,7 +23,8 @@ def _process_and_save_analysis(
     file_name: str,
     job_title: str,
     job_company: str,
-    db: Session
+    user_id: int = None,
+    db: Session = None
 ) -> AnalysisResponse:
     cleaned_resume = resume_text.strip()
     cleaned_jd = jd_text.strip()
@@ -77,6 +80,7 @@ def _process_and_save_analysis(
     
     # Store in database
     db_record = AnalysisRecord(
+        user_id=user_id,
         candidate_name=candidate_name,
         candidate_email=email,
         candidate_phone=phone,
@@ -140,6 +144,7 @@ async def analyze_pdf_upload(
     job_description: str = Form(...),
     job_title: str = Form("Target Role"),
     job_company: str = Form("Company"),
+    user: Optional[User] = Depends(get_optional_user),
     db: Session = Depends(get_db)
 ):
     """Upload PDF resume, extract text via PyMuPDF, and run ATS analysis against JD."""
@@ -182,12 +187,14 @@ async def analyze_pdf_upload(
         file_name=file.filename or "Uploaded_Resume.pdf",
         job_title=job_title,
         job_company=job_company,
+        user_id=user.id if user else None,
         db=db
     )
 
 @router.post("/text", response_model=AnalysisResponse)
 async def analyze_text(
     payload: AnalyzeTextRequest,
+    user: Optional[User] = Depends(get_optional_user),
     db: Session = Depends(get_db)
 ):
     """Analyze directly pasted resume text against job description."""
@@ -197,5 +204,6 @@ async def analyze_text(
         file_name=payload.file_name or "Pasted_Resume.txt",
         job_title=payload.job_title or "Target Role",
         job_company=payload.job_company or "Company",
+        user_id=user.id if user else None,
         db=db
     )

@@ -10,7 +10,8 @@ import JobsExplorerPage from './pages/JobsExplorerPage';
 import CompaniesExplorerPage from './pages/CompaniesExplorerPage';
 import JarvisFloatingOrb from './components/Jarvis/JarvisFloatingOrb';
 import JarvisChatPanel from './components/Jarvis/JarvisChatPanel';
-import { api } from './services/api';
+import AuthModal from './components/AuthModal';
+import { api, authStore } from './services/api';
 
 const CURRENT_YEAR = new Date().getFullYear();
 
@@ -18,11 +19,25 @@ export default function App() {
   const [activePage, setActivePage] = useState('landing');
   const [activeReport, setActiveReport] = useState(null);
   const [isJarvisOpen, setIsJarvisOpen] = useState(false);
+  const [isAuthOpen, setIsAuthOpen] = useState(false);
+  const [currentUser, setCurrentUser] = useState(() => authStore.getUser());
   
   // Stored sample data for quick load
   const [initialResumeText, setInitialResumeText] = useState('');
   const [initialJob, setInitialJob] = useState(null);
   const [selectedCompanyForJobs, setSelectedCompanyForJobs] = useState('all');
+
+  // Verify auth session on mount
+  useEffect(() => {
+    if (authStore.getToken()) {
+      api.getMe()
+        .then((user) => setCurrentUser(user))
+        .catch(() => {
+          authStore.clear();
+          setCurrentUser(null);
+        });
+    }
+  }, []);
 
   // Automatically load the latest analysis as initial context if available
   useEffect(() => {
@@ -85,6 +100,13 @@ export default function App() {
         activePage={activePage} 
         setActivePage={setActivePage} 
         onOpenJarvis={() => setIsJarvisOpen(true)}
+        currentUser={currentUser}
+        onOpenAuth={() => setIsAuthOpen(true)}
+        onLogout={() => {
+          authStore.clear();
+          setCurrentUser(null);
+          setActiveReport(null);
+        }}
       />
 
       {/* Main Container */}
@@ -182,6 +204,26 @@ export default function App() {
         onClose={() => setIsJarvisOpen(false)}
         contextReport={activeReport}
         onUpdateCandidateName={handleUpdateCandidateName}
+      />
+
+      {/* Authentication Modal */}
+      <AuthModal
+        isOpen={isAuthOpen}
+        onClose={() => setIsAuthOpen(false)}
+        onAuthSuccess={(user) => {
+          setCurrentUser(user);
+          // Reload history for this user
+          api.getHistory()
+            .then((list) => {
+              if (list && list.length > 0) {
+                return api.getHistoryDetail(list[0].id);
+              }
+            })
+            .then((report) => {
+              if (report) setActiveReport(report);
+            })
+            .catch(() => {});
+        }}
       />
 
       {/* Footer */}

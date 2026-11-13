@@ -1,6 +1,22 @@
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, Float, Text, DateTime, Boolean
+from sqlalchemy import Column, Integer, String, Float, Text, DateTime, Boolean, ForeignKey
+from sqlalchemy.orm import relationship
 from app.database import Base
+
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    email = Column(String(255), unique=True, index=True, nullable=False)
+    hashed_password = Column(String(255), nullable=False)
+    full_name = Column(String(255), default="")
+    is_active = Column(Boolean, default=True)
+    is_demo = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    # Isolated analysis reports belonging exclusively to this user
+    analyses = relationship("AnalysisRecord", back_populates="owner", cascade="all, delete-orphan")
+
 
 class AnalysisRecord(Base):
     __tablename__ = "analysis_records"
@@ -8,6 +24,10 @@ class AnalysisRecord(Base):
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
     
+    # Ownership association (Strict authorization)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
+    owner = relationship("User", back_populates="analyses")
+
     candidate_name = Column(String(255), default="Unknown Candidate")
     candidate_email = Column(String(255), default="")
     candidate_phone = Column(String(100), default="")
@@ -52,8 +72,8 @@ class JobListing(Base):
     work_mode = Column(String(50), default="Remote", index=True)  # "Remote" | "Hybrid" | "On-site"
     
     role_category = Column(String(100), default="Software Engineering", index=True)
-    experience_level = Column(String(50), default="Mid-level", index=True)  # "Internship" | "Fresher / Entry" | "Junior" | "Mid-level" | "Senior" | "Lead / Principal"
-    employment_type = Column(String(50), default="Full-time", index=True)  # "Full-time" | "Part-time" | "Internship" | "Contract"
+    experience_level = Column(String(50), default="Mid-level", index=True)
+    employment_type = Column(String(50), default="Full-time", index=True)
     
     salary_min = Column(Float, nullable=True)
     salary_max = Column(Float, nullable=True)
@@ -63,9 +83,12 @@ class JobListing(Base):
     skills = Column(Text, default="[]")  # JSON list of extracted skills
     description = Column(Text, default="")  # Full job description
     url = Column(String(1000), default="")  # Direct application link
-    source = Column(String(100), default="Verified Career Portal")  # "Remotive" | "Greenhouse" | "Arbeitnow" | "The Muse" | "Adzuna"
+    source = Column(String(100), default="Verified Career Portal")
+    is_demo = Column(Boolean, default=False, index=True)  # Distinguish curated demo from live
     
     posted_date = Column(DateTime, default=datetime.utcnow, index=True)
+    last_synced_at = Column(DateTime, default=datetime.utcnow, index=True)
+    expires_at = Column(DateTime, nullable=True, index=True)
     is_active = Column(Boolean, default=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -73,7 +96,7 @@ class JobListing(Base):
 class CompanyProfile(Base):
     __tablename__ = "company_profiles"
 
-    id = Column(String(100), primary_key=True, index=True)  # e.g. "google", "microsoft", "tcs"
+    id = Column(String(100), primary_key=True, index=True)
     name = Column(String(255), index=True, nullable=False)
     logo = Column(String(500), default="")
     industry = Column(String(100), default="Technology", index=True)
@@ -87,3 +110,14 @@ class CompanyProfile(Base):
     openings_count = Column(Integer, default=0)
     is_featured = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class SyncMetadata(Base):
+    __tablename__ = "sync_metadata"
+
+    id = Column(String(50), primary_key=True, default="jobs_sync")
+    last_sync_time = Column(DateTime, default=datetime.utcnow, nullable=False)
+    synced_by = Column(String(100), default="system")
+    total_fetched = Column(Integer, default=0)
+    total_added = Column(Integer, default=0)
+    message = Column(String(500), default="")

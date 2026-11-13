@@ -47,7 +47,9 @@ def _format_job_item(j: JobListing) -> JobItem:
         url=j.url or "",
         source=j.source or "Verified Portal",
         posted_date=j.posted_date.strftime("%Y-%m-%d") if j.posted_date else "",
-        is_active=j.is_active
+        is_active=j.is_active,
+        is_demo=bool(j.is_demo),
+        last_synced_at=j.last_synced_at.strftime("%Y-%m-%d %H:%M:%S") if j.last_synced_at else None
     )
 
 def _format_company_item(c: CompanyProfile) -> CompanyItem:

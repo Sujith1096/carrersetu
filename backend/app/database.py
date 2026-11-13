@@ -52,4 +52,9 @@ def init_db():
         Base.metadata.create_all(bind=engine)
         print(f"[INFO] Database initialized successfully ({'SQLite' if 'sqlite' in DATABASE_URL else 'PostgreSQL'}).")
     except Exception as e:
-        print(f"[WARN] Database initialization notice: {e}")
+        is_prod = os.getenv("ENVIRONMENT") == "production" or not DATABASE_URL.startswith("sqlite")
+        if is_prod:
+            print(f"[FATAL] Critical: Production database failed to initialize: {e}")
+            raise RuntimeError(f"Production database initialization failed: {e}")
+        else:
+            print(f"[WARN] Database initialization notice: {e}")

@@ -5,8 +5,9 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.database import init_db, SessionLocal, engine
-from app.routers import analyze, history, stats, samples, jarvis, jobs
+from app.routers import auth, analyze, history, stats, samples, jarvis, jobs
 from app.services.job_aggregator import job_aggregator
+from sqlalchemy import text
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -70,6 +71,7 @@ async def global_exception_handler(request: Request, exc: Exception):
     )
 
 # Register routers
+app.include_router(auth.router)
 app.include_router(analyze.router)
 app.include_router(history.router)
 app.include_router(stats.router)
@@ -79,16 +81,33 @@ app.include_router(jobs.router)
 
 @app.get("/api/health")
 def health_check():
-    """System health check and diagnostic status."""
+    """
+    System health check and diagnostic status.
+    Returns HTTP 200 when healthy, or HTTP 503 when critical database connectivity fails.
+    """
     db_status = "connected"
+    is_healthy = True
     try:
         with engine.connect() as conn:
-            pass
+            conn.execute(text("SELECT 1"))
     except Exception as e:
         db_status = f"unhealthy: {str(e)}"
+        is_healthy = False
+
+    if not is_healthy:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "unhealthy",
+                "service": "CareerSetu API",
+                "version": "1.0.0",
+                "database": db_status,
+                "error": "Critical database connectivity failure. Service is unavailable."
+            }
+        )
 
     return {
-        "status": "healthy" if db_status == "connected" else "degraded",
+        "status": "healthy",
         "service": "CareerSetu API",
         "version": "1.0.0",
         "database": db_status,

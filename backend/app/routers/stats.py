@@ -1,18 +1,30 @@
 import json
 from collections import Counter
+from typing import Optional
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import AnalysisRecord
+from app.models import AnalysisRecord, User
 from app.schemas import StatsResponse, HistoryItem
+from app.services.auth import get_optional_user
 
 router = APIRouter(prefix="/api/stats", tags=["Statistics"])
 
 @router.get("", response_model=StatsResponse)
-def get_dashboard_stats(db: Session = Depends(get_db)):
-    """Compute aggregate dashboard metrics, skill frequencies, and score distributions."""
-    records = db.query(AnalysisRecord).order_by(AnalysisRecord.created_at.desc()).all()
+def get_dashboard_stats(
+    user: Optional[User] = Depends(get_optional_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Compute aggregate dashboard metrics, skill frequencies, and score distributions.
+    If authenticated, securely scopes metrics to the user's private data.
+    """
+    query = db.query(AnalysisRecord)
+    if user:
+        query = query.filter(AnalysisRecord.user_id == user.id)
+        
+    records = query.order_by(AnalysisRecord.created_at.desc()).all()
     
     if not records:
         return StatsResponse(
@@ -73,25 +85,19 @@ def get_dashboard_stats(db: Session = Depends(get_db)):
         except Exception:
             pass
             
-    top_in_demand = [
-        {"skill": skill, "count": count, "percentage": round((count / total_count) * 100, 1)}
-        for skill, count in matching_counter.most_common(8)
-    ]
+    top_matched = [{"skill": k, "count": v} for k, v in matching_counter.most_common(8)]
+    top_missing = [{"skill": k, "count": v} for k, v in missing_counter.most_common(8)]
     
-    top_missing = [
-        {"skill": skill, "count": count, "percentage": round((count / total_count) * 100, 1)}
-        for skill, count in missing_counter.most_common(8)
-    ]
-
-    recent_history = []
+    # Format recent history items (scoped strictly to current query)
+    recent_items = []
     for r in records[:5]:
         try:
-            m_skills = json.loads(r.matching_skills or "[]")
-            miss_skills = json.loads(r.missing_skills or "[]")
+            m_count = len(json.loads(r.matching_skills or "[]"))
+            miss_count = len(json.loads(r.missing_skills or "[]"))
         except Exception:
-            m_skills, miss_skills = [], []
+            m_count, miss_count = 0, 0
             
-        recent_history.append(HistoryItem(
+        recent_items.append(HistoryItem(
             id=r.id,
             created_at=r.created_at.strftime("%b %d, %Y %I:%M %p") if r.created_at else "",
             candidate_name=r.candidate_name or "Candidate",
@@ -101,8 +107,8 @@ def get_dashboard_stats(db: Session = Depends(get_db)):
             file_name=r.file_name or "resume.pdf",
             overall_score=r.overall_score or 0.0,
             match_rating=r.match_rating or "Needs Optimization",
-            matching_skills_count=len(m_skills),
-            missing_skills_count=len(miss_skills)
+            matching_skills_count=m_count,
+            missing_skills_count=miss_count
         ))
 
     return StatsResponse(
@@ -111,7 +117,7 @@ def get_dashboard_stats(db: Session = Depends(get_db)):
         highest_score=highest,
         lowest_score=lowest,
         score_distribution=distribution,
-        top_in_demand_skills=top_in_demand,
+        top_in_demand_skills=top_matched,
         top_missing_skills=top_missing,
-        recent_history=recent_history
+        recent_history=recent_items
     )

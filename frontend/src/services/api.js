@@ -11,6 +11,39 @@ const resolveApiBase = () => {
 export const API_BASE = resolveApiBase();
 
 /**
+ * Authentication Token and User Store
+ */
+export const authStore = {
+  getToken: () => {
+    try {
+      return localStorage.getItem('careersetu_auth_token') || '';
+    } catch {
+      return '';
+    }
+  },
+  getUser: () => {
+    try {
+      const u = localStorage.getItem('careersetu_user');
+      return u ? JSON.parse(u) : null;
+    } catch {
+      return null;
+    }
+  },
+  setAuth: (token, user) => {
+    try {
+      if (token) localStorage.setItem('careersetu_auth_token', token);
+      if (user) localStorage.setItem('careersetu_user', JSON.stringify(user));
+    } catch {}
+  },
+  clear: () => {
+    try {
+      localStorage.removeItem('careersetu_auth_token');
+      localStorage.removeItem('careersetu_user');
+    } catch {}
+  }
+};
+
+/**
  * Isolated Client Session Storage for J.A.R.V.I.S. API Keys.
  * Ensures user keys are stored only in their current browser session and never leak to other users.
  */
@@ -44,9 +77,13 @@ export const jarvisSessionStore = {
 };
 
 export async function fetchJson(endpoint, options = {}) {
+  const token = authStore.getToken();
+  const authHeaders = token ? { 'Authorization': `Bearer ${token}` } : {};
+
   const res = await fetch(`${API_BASE}${endpoint}`, {
     headers: {
       'Accept': 'application/json',
+      ...authHeaders,
       ...options.headers,
     },
     ...options,
@@ -69,6 +106,25 @@ export async function fetchJson(endpoint, options = {}) {
 }
 
 export const api = {
+  // Authentication & Session
+  register: ({ email, password, full_name }) =>
+    fetchJson('/auth/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password, full_name }),
+    }),
+  login: ({ email, password }) =>
+    fetchJson('/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    }),
+  demoLogin: () =>
+    fetchJson('/auth/demo-login', {
+      method: 'POST',
+    }),
+  getMe: () => fetchJson('/auth/me'),
+
   // Health
   checkHealth: () => fetchJson('/health'),
 
@@ -95,8 +151,12 @@ export const api = {
     formData.append('job_title', jobTitle);
     formData.append('job_company', jobCompany);
 
+    const token = authStore.getToken();
+    const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
+
     const res = await fetch(`${API_BASE}/analyze/upload`, {
       method: 'POST',
+      headers,
       body: formData,
     });
 

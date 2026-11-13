@@ -3,12 +3,12 @@ import json
 import re
 import urllib.request
 import urllib.error
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import List, Dict, Any, Optional, Tuple
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, and_, desc, asc
 
-from app.models import JobListing, CompanyProfile
+from app.models import JobListing, CompanyProfile, SyncMetadata
 from app.services.ml_engine import extract_skills_from_text
 from app.services.skill_bank import ALL_SKILLS
 
@@ -852,11 +852,19 @@ class JobAggregatorService:
                         skills=json.dumps(j.get("skills", [])),
                         description=j["description"],
                         url=j["url"],
-                        source=j.get("source", "Official Careers"),
+                        source="Curated Demo Baseline",
+                        is_demo=True,
                         posted_date=j.get("posted_date", datetime.utcnow()),
+                        last_synced_at=datetime.utcnow(),
                         is_active=True
                     )
                     db.add(job_obj)
+                db.commit()
+            else:
+                # Backfill unflagged demo records if created before migration
+                db.query(JobListing).filter(
+                    or_(JobListing.is_demo == None, JobListing.source == "Official Careers")
+                ).update({JobListing.is_demo: True, JobListing.source: "Curated Demo Baseline"}, synchronize_session=False)
                 db.commit()
 
             if company_count == 0 or job_count == 0:
@@ -1033,11 +1041,14 @@ class JobAggregatorService:
     def sync_live_jobs(self, db: Session) -> Dict[str, Any]:
         """
         Orchestrates syncing live listings from Remotive, Arbeitnow, and Greenhouse boards.
-        Deduplicates against database and enforces a 60s cooldown to prevent API flooding.
+        Deduplicates against database, updates existing listings, marks expired listings,
+        and enforces a 60s persistent cooldown via SyncMetadata across workers.
         """
-        now = datetime.now(timezone.utc)
-        if self.last_sync_time:
-            elapsed = (now - self.last_sync_time).total_seconds()
+        now = datetime.utcnow()
+        # 1. Check persistent DB rate limiting via SyncMetadata
+        sync_meta = db.query(SyncMetadata).filter(SyncMetadata.id == "jobs_sync").first()
+        if sync_meta and sync_meta.last_sync_time:
+            elapsed = (now - sync_meta.last_sync_time).total_seconds()
             if elapsed < 60:
                 total_active = db.query(JobListing).filter(JobListing.is_active == True).count()
                 return {
@@ -1052,55 +1063,103 @@ class JobAggregatorService:
 
         # 1. Remotive API
         remotive_jobs = self.fetch_live_remotive_jobs(limit=25)
+        for rj in remotive_jobs:
+            rj["source"] = "Remotive Live Feed"
+            rj["is_demo"] = False
         fetched_jobs.extend(remotive_jobs)
 
         # 2. Arbeitnow API
         arbeitnow_jobs = self.fetch_live_arbeitnow_jobs()
+        for aj in arbeitnow_jobs:
+            aj["source"] = "Arbeitnow Live Feed"
+            aj["is_demo"] = False
         fetched_jobs.extend(arbeitnow_jobs)
 
         # 3. Greenhouse Boards for top tech
-        gh_cloudflare = self.fetch_live_greenhouse_board("cloudflare", "Cloudflare")
-        fetched_jobs.extend(gh_cloudflare)
-
-        gh_gitlab = self.fetch_live_greenhouse_board("gitlab", "GitLab")
-        fetched_jobs.extend(gh_gitlab)
-
-        gh_discord = self.fetch_live_greenhouse_board("discord", "Discord")
-        fetched_jobs.extend(gh_discord)
+        for board_key, board_name in [("cloudflare", "Cloudflare"), ("gitlab", "GitLab"), ("discord", "Discord")]:
+            gh_jobs = self.fetch_live_greenhouse_board(board_key, board_name)
+            for gj in gh_jobs:
+                gj["source"] = f"{board_name} Greenhouse Feed"
+                gj["is_demo"] = False
+            fetched_jobs.extend(gh_jobs)
 
         added_count = 0
+        updated_count = 0
+
         for j in fetched_jobs:
-            existing = db.query(JobListing).filter(JobListing.id == j["id"]).first()
-            if not existing:
-                # Also ensure no duplicate title + company combo
-                dup = db.query(JobListing).filter(
-                    JobListing.title == j["title"],
-                    JobListing.company == j["company"]
-                ).first()
-                if not dup:
-                    job_obj = JobListing(
-                        id=j["id"],
-                        title=j["title"],
-                        company=j["company"],
-                        company_id=j.get("company_id", ""),
-                        company_logo=j.get("company_logo", ""),
-                        location=j["location"],
-                        city=j.get("city", ""),
-                        country=j.get("country", "Global"),
-                        work_mode=j.get("work_mode", "Remote"),
-                        role_category=j.get("role_category", "Software Engineering"),
-                        experience_level=j.get("experience_level", "Mid-level"),
-                        employment_type=j.get("employment_type", "Full-time"),
-                        salary_text=j.get("salary_text", ""),
-                        skills=json.dumps(j.get("skills", [])),
-                        description=j["description"],
-                        url=j["url"],
-                        source=j.get("source", "Live API"),
-                        posted_date=j.get("posted_date", datetime.utcnow()),
-                        is_active=True
-                    )
-                    db.add(job_obj)
-                    added_count += 1
+            existing = db.query(JobListing).filter(
+                or_(
+                    JobListing.id == j["id"],
+                    and_(JobListing.title == j["title"], JobListing.company == j["company"])
+                )
+            ).first()
+
+            if existing:
+                # Refresh existing vacancy details
+                if j.get("description") and len(j["description"]) > 30:
+                    existing.description = j["description"]
+                if j.get("url"):
+                    existing.url = j["url"]
+                if j.get("salary_text"):
+                    existing.salary_text = j["salary_text"]
+                existing.last_synced_at = now
+                existing.is_active = True
+                existing.is_demo = False
+                existing.source = j.get("source", existing.source)
+                updated_count += 1
+            else:
+                job_obj = JobListing(
+                    id=j["id"],
+                    title=j["title"],
+                    company=j["company"],
+                    company_id=j.get("company_id", ""),
+                    company_logo=j.get("company_logo", ""),
+                    location=j["location"],
+                    city=j.get("city", ""),
+                    country=j.get("country", "Global"),
+                    work_mode=j.get("work_mode", "Remote"),
+                    role_category=j.get("role_category", "Software Engineering"),
+                    experience_level=j.get("experience_level", "Mid-level"),
+                    employment_type=j.get("employment_type", "Full-time"),
+                    salary_text=j.get("salary_text", ""),
+                    skills=json.dumps(j.get("skills", [])),
+                    description=j["description"],
+                    url=j["url"],
+                    source=j.get("source", "Live Vacancy Feed"),
+                    is_demo=False,
+                    posted_date=j.get("posted_date", now),
+                    last_synced_at=now,
+                    is_active=True
+                )
+                db.add(job_obj)
+                added_count += 1
+
+        # 4. Expiry detection & cleanup
+        # Deactivate listings explicitly expired
+        db.query(JobListing).filter(
+            JobListing.expires_at != None,
+            JobListing.expires_at < now,
+            JobListing.is_active == True
+        ).update({JobListing.is_active: False}, synchronize_session=False)
+
+        # Deactivate stale live vacancies not synced in over 30 days
+        stale_threshold = now - timedelta(days=30)
+        db.query(JobListing).filter(
+            JobListing.is_demo == False,
+            JobListing.last_synced_at != None,
+            JobListing.last_synced_at < stale_threshold,
+            JobListing.is_active == True
+        ).update({JobListing.is_active: False}, synchronize_session=False)
+
+        # 5. Update persistent SyncMetadata
+        if not sync_meta:
+            sync_meta = SyncMetadata(id="jobs_sync")
+            db.add(sync_meta)
+        sync_meta.last_sync_time = now
+        sync_meta.synced_by = "system"
+        sync_meta.total_fetched = len(fetched_jobs)
+        sync_meta.total_added = added_count
+        sync_meta.message = f"Fetched {len(fetched_jobs)} listings; added {added_count} new, updated {updated_count} active listings."
 
         db.commit()
         self.last_sync_time = datetime.now(timezone.utc)
@@ -1109,9 +1168,10 @@ class JobAggregatorService:
         total_active = db.query(JobListing).filter(JobListing.is_active == True).count()
         return {
             "status": "success",
-            "message": f"Successfully synchronized live job feeds. Fetched {len(fetched_jobs)} total listings, added {added_count} new unique jobs.",
+            "message": f"Successfully synchronized live job feeds. Fetched {len(fetched_jobs)} total listings, added {added_count} new unique jobs, updated {updated_count} existing.",
             "fetched": len(fetched_jobs),
             "added": added_count,
+            "updated": updated_count,
             "total_active_jobs": total_active
         }
 
