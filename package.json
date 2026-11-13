@@ -1,0 +1,24 @@
+{
+  "name": "careersetu",
+  "version": "1.0.0",
+  "description": "CareerSetu – AI Career Intelligence Platform",
+  "scripts": {
+    "dev": "npm --prefix frontend run dev",
+    "build": "npm --prefix frontend run build",
+    "server": "python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload --app-dir backend",
+    "test:backend": "python backend/tests/test_ml_engine.py",
+    "generate:sample-pdf": "python backend/generate_sample_pdf.py"
+  },
+  "keywords": [
+    "ats",
+    "resume-parser",
+    "machine-learning",
+    "tf-idf",
+    "cosine-similarity",
+    "react",
+    "fastapi",
+    "tailwind"
+  ],
+  "author": "CareerSetu Team",
+  "license": "MIT"
+}
